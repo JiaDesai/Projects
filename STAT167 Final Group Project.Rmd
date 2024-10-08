@@ -1,0 +1,471 @@
+---
+title: "STAT167 Final Group Project"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-06-09"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Data Detectives: Analysis of Credit Card Approvals
+
+
+## Introduction and project description
+We acquired our “Credit Card Approval Prediction” dataset from Kaggle. The dataset was collected from a real bank and initially included 19 features and 438,557 row entries. Because the data is from a real bank the information posted on Kaggle was slightly altered in order to maintain their customer’s information anonymous. 
+Our project set out to determine which factors affected whether or not a person is approved for a credit card. We were also interested to find which of these factors were the most impactful for an individual’s approval.
+
+
+## EDA: Data exploration and visualization
+### Data Cleaning
+The original dataset contained over 400 thousand observations, which we later found to be very misleading. During data cleaning it was discovered that there was a multitude of cards which were opened up for companies. The company cards were messing with the income and causing the medians to seem higher than it really was so all company cards had to be removed. Afterwards, we discovered that there was a shocking amount of duplicates withing the dataset, over 300 thousand duplicates. This was further throwing off out results because, for example, a single person earning 6.7million dollars a year was duplicated 7 times. Almost every person in the set was duplicated ten or more times. After the removal of duplicates and company cards we were left with only 13,800 observations. 
+
+Furthermore, the dataset did not have the data for whether or not each person was approved. This proved to be a major problem as none of our planned data analysis methods would work without this information. So to get around this we generated fake data using the provided information to create another column for approvals. Using income as the main variable for determining approval, we added on home ownership and education as secondary methods of boosting the probability of approval. In the end 13 different combinations of income, education, and homeownership was used to generate the percentages of approval per person to cover as much ground as possible. We used a rbinom to generate 0s and 1s based on those percentages for each individual, 1 being approved and 0 being rejected.
+
+**Libraries used**
+```{r}
+library(dplyr)
+library(ggplot2)
+library(MASS)
+library(caret)
+library(lattice)
+```
+
+**Removing the company cards**
+```{r}
+card <- read.csv("application_record.csv")
+noCompany <- filter(card, card$NAME_INCOME_TYPE != "Commercial associate")
+head(noCompany)
+```
+
+**Comparison, only higher education and academic degree people opened company cards**
+```{r}
+# Is college worth it?
+noCompany |> 
+  group_by(NAME_EDUCATION_TYPE) |> 
+  summarize(median = median(AMT_INCOME_TOTAL))
+
+card |> 
+  group_by(NAME_EDUCATION_TYPE) |> 
+  summarize(median = median(AMT_INCOME_TOTAL)) 
+```
+We learn that there is no different in the two datasets, i.e., the two categories of people whose credit card application got approved. 
+
+**Code to remove the duplicates**
+```{r}
+NoDupe <- noCompany |> mutate(income = AMT_INCOME_TOTAL, children = CNT_CHILDREN, married = NAME_FAMILY_STATUS, income_type = NAME_INCOME_TYPE, education = NAME_EDUCATION_TYPE, gender = CODE_GENDER, car = FLAG_OWN_CAR, home = FLAG_OWN_REALTY) 
+
+keep <- c("income", "children", "married", "income_type", "education", "gender", "car", "home")
+dfc <- NoDupe[keep]
+
+head(df)
+
+dfc <- dfc |> distinct()
+head(dfc) # This is the cleaned dataset that we will be using
+```
+
+**Code for the generated credit card approvals**
+```{r}
+dfc$EduHigh <- ifelse(dfc$education == "Higher education" | dfc$education == "Academic degree", "high", "low")
+
+p <- 0.0
+
+set.seed(167)
+for(x in 1:13800)
+{
+  if(dfc$income[x] > 1000000){
+    dfc$prob[x] <- rbinom(1, 1, 0.95)
+  } 
+  else if (dfc$income[x] > 500000){
+    dfc$prob[x] <- rbinom(1, 1, 0.8)
+    if(dfc$home[x] == "Y" | dfc$EduHigh[x] == "high"){
+      dfc$prob[x] <- rbinom(1, 1, 0.9)
+    }
+  }else if(dfc$income[x] > 100000){
+    dfc$prob[x] <- rbinom(1, 1, 0.6)
+    if(dfc$home[x] == "Y" | dfc$EduHigh[x] == "high")
+    {
+      dfc$prob[x] <- rbinom(1, 1, 0.7)
+    }
+    if(dfc$home[x] == "Y" & dfc$EduHigh[x] == "high"){
+      dfc$prob[x] <- rbinom(1, 1, 0.85)
+    }
+  }else if(dfc$income[x] > 40000){
+    dfc$prob[x] <- rbinom(1, 1, 0.40)
+    if(dfc$home[x] == "Y" | dfc$EduHigh[x] == "high")
+    {
+      dfc$prob[x] <- rbinom(1, 1, 0.60)
+    }
+    if(dfc$home[x] == "Y" & dfc$EduHigh[x] == "high"){
+      dfc$prob[x] <- rbinom(1, 1, 0.70)
+    }
+  }else if(dfc$income[x] <= 40000 & dfc$income[x] > 30000){
+    dfc$prob[x] <- rbinom(1, 1, 0.15)
+    if(dfc$home[x] == "Y" | dfc$EduHigh[x] == "high")
+    {
+      dfc$prob[x] <- rbinom(1, 1, 0.30)
+    }
+    if(dfc$home[x] == "Y" & dfc$EduHigh[x] == "high"){
+      dfc$prob[x] <- rbinom(1, 1, 0.40)
+    }
+  }else{
+    dfc$prob[x] <- rbinom(1, 1, 0.1)
+  }
+}
+
+head(dfc)
+
+probAprov <- data.frame(income = dfc$income, children = dfc$children, married = dfc$married, income_type = dfc$income_type, education = dfc$education, gender = dfc$gender, car = dfc$car, home = dfc$home, EduHigh = dfc$EduHigh, prob = dfc$prob)
+
+write.csv(probAprov, "probAprov.csv")
+head(probAprov) # This is the final version of the dataset that we will be using.
+```
+
+
+### Visualization
+We used a boxplot to visualize the effects of education level on whether or not a person is approved for a credit card we found that it had very little influence. Those with higher education had a 77-80% chance of approval while those who did not obtain higher education have around 60-64% chance of approval. Although a clear difference, it is not big enough for this to be solely the result of education. Confounding variables such as income or home ownership would likely have caused the differences seen, since those with higher education likely also have higher income and are more likely to own a home. In the end, we came to the conclusion that regardless of education level, people were still much more likely to be approved than turned away. 
+
+**Bar plot to compare education and approval & get percentages**
+```{r}
+ggplot(probAprov)+ geom_bar(mapping = aes(x = education, fill = factor(prob)), position = "dodge") +  guides(x = guide_axis(n.dodge = 2)) + scale_fill_discrete(name = "Card was", labels = c("Rejected", "Approved")) +
+  labs(x = "Education level completed", title = "Credit card approval or rejection based on education level")
+
+#linear regression for education/approval  
+summary(lm(prob ~ education, data = probAprov))
+
+#finding percentages of each education level that got approved
+totIncHi <- 0
+totHigh <- 0
+totSec <- 0
+totLSec <- 0
+totAcad <- 0
+
+for(x in 1:13800)
+{
+  if(probAprov$education[x] == "Incomplete higher" & probAprov$prob[x] == 1)
+  {
+    totIncHi <- totIncHi + 1
+  }
+    if(probAprov$education[x] == "Higher education" & probAprov$prob[x] == 1)
+  {
+    totHigh <- totHigh + 1
+    }
+    if(probAprov$education[x] == "Secondary / secondary special" & probAprov$prob[x] == 1)
+  {
+    totSec <- totSec + 1
+    }
+    if(probAprov$education[x] == "Lower secondary" & probAprov$prob[x] == 1)
+  {
+    totLSec <- totLSec + 1
+    }
+    if(probAprov$education[x] == "Academic degree" & probAprov$prob[x] == 1)
+  {
+    totAcad <- totAcad + 1
+  }
+}
+
+totIncHi/sum(probAprov$education == "Incomplete higher")
+totAcad/sum(probAprov$education == "Academic degree")
+totSec/sum(probAprov$education == "Secondary / secondary special")
+totLSec/sum(probAprov$education == "Lower secondary")
+totHigh/sum(probAprov$education == "Higher education")
+```
+
+
+We used a heatmap to visualize if a person owning a car or a house influenced whether or not they were approved for a credit card. We noticed that a significant amount of people that were approved did own either a car or house. This could be because banks check previous credit history and owning a car or house indicates credit history. This finding was later proven to be a significant factor in who got approved for a credit card or not. 
+
+We also produced a barplot to observe credit card approvals amongst males vs. females, and different income types. Females(61.8) were approved for credit cards more than males(38.4). From those who got approved for a credit card, 55.3% were of the Working income type. Then came Pensioners and State servants at 23.7% and 21.0% respectively. Students were rarely approved at 0.0325%. However, we observed that these two factors of gender and income type did not play a significant role in determining if the applicant was approved for a credit card. 
+
+**Code for barplots**
+```{r}
+#filter out only those who got approved
+approved <- filter(probAprov, prob == 1)
+
+#barplot for gender
+ggplot(data = approved, aes(x = gender, fill = gender)) +
+  geom_bar() +
+  labs(title = "Distribution of Credit Card Approvals by Gender",
+       x = "Gender",
+       y = "Count of Approvals")
+
+#percentage distribution by gender
+approval_counts_gender <- approved |>
+  group_by(gender) |>
+  summarise(count = n())
+
+approval_percentages_gender <- approval_counts_gender |>
+  mutate(percentage = (count / sum(count)) * 100)
+approval_percentages_gender
+
+#barplot for income type
+ggplot(data = approved, aes(x = income_type, fill = income_type)) +
+  geom_bar() +
+  labs(title = "Distribution of Credit Card Approvals by Income Type",
+       x = "Income Type",
+       y = "Count of Approvals")
+
+#percentage distribution by income type
+approval_counts_income <- approved |>
+  group_by(income_type) |>
+  summarise(count = n())
+
+approval_percentages_income <- approval_counts_income |>
+  mutate(percentage = (count / sum(count)) * 100)
+approval_percentages_income
+
+#heatmap for assets(car and home)
+approval_counts_assets <- probAprov |>
+  group_by(car, home) |>
+  summarise(count = n())
+  
+
+ggplot(approval_counts_assets, aes(x = car, y = home, fill = count)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "lightyellow", high = "orange") +
+  labs(title = "Heatmap of Car and Home Ownership Status",
+       x = "Car Ownership",
+       y = "Home Ownership")
+
+#percentage distribution by asset ownership
+total_count <- sum(approval_counts_assets$count)
+approval_percentages_assets <- approval_counts_assets %>%
+  mutate(percentage = (count / total_count) * 100)
+approval_percentages_assets
+```
+
+
+## Data analysis, modeling, predictions, and/or other statistical learning results
+We partitioned the dataset, allocating 70% for training and 30% for testing. This split ensured that my models were trained on a substantial portion of the data while retaining a significant amount for unbiased evaluation. Given that credit_approval is a binary target variable, we employed a Generalized Linear Model (GLM) with the logit function. This choice was crucial for modeling binary outcomes effectively.
+
+For the full model, we selected credit_approval as the target variable. We included all the variables for the predictors but had to remove EduHigh due to perfect collinearity detected during the preliminary analysis. Collinearity can distort model estimates, so this step was crucial for accurate predictions.
+
+Next, we constructed the reduced model using stepwise regression. This method allowed us to iteratively select the most significant predictors, enhancing model simplicity and interpretability. The resulting model included income, education, gender, and home.
+Additionally, we noticed that the income variable was not normally distributed and exhibited right skewness. We applied a logarithmic transformation to address this, normalizing the distribution and improving the model’s performance.
+
+**Creating histogram for income amount(income)**
+```{r}
+# Logarithmic transformation
+probAprov$log_income <- log(probAprov$income)
+
+# Plot histogram of log-transformed income
+ggplot(probAprov, aes(x = log_income)) + 
+  geom_histogram(binwidth = 0.2) + 
+  labs(title = "Distribution of Log-transformed Income")
+
+# Square root transformation
+probAprov$sqrt_income <- sqrt(probAprov$income)
+
+# Plot histogram of square root-transformed income
+ggplot(probAprov, aes(x = sqrt_income)) + 
+  geom_histogram(binwidth = 100) + 
+  labs(title = "Distribution of Square Root-transformed Income")
+```
+
+**Building the Full Model**
+```{r}
+set.seed(167)
+
+credit_card_train_index <- createDataPartition(probAprov$prob, p = .7, list = FALSE, times = 1)
+
+indices <- sample(nrow(probAprov))
+train_size <- round(0.7 * nrow(probAprov))
+credit_card_train_index <- indices[1:train_size]
+credit_card_test_index <- indices[(train_size + 1):nrow(probAprov)]
+
+Train_credit_card <- probAprov[credit_card_train_index,]
+Test_credit_card  <- probAprov[credit_card_test_index,]
+
+Train_credit_card$prob <- as.factor(Train_credit_card$prob)
+Test_credit_card$prob <- as.factor(Test_credit_card$prob)
+
+credit_card_full_model <- glm(prob ~ income + children + married + income_type + education + gender + car + home, data = Train_credit_card, family = binomial(link="logit"))
+
+summary(credit_card_full_model)
+
+pred_prob_credit_card <- predict(credit_card_full_model, newdata = Test_credit_card, type = "response")
+pred_class_credit_card <- ifelse(pred_prob_credit_card > 0.5, 1, 0)
+
+pred_class_credit_card <- as.factor(pred_class_credit_card)
+levels(pred_class_credit_card) <- levels(Test_credit_card$prob)
+
+credit_card_conf_matrix <- confusionMatrix(data = pred_class_credit_card, reference = Test_credit_card$prob)
+
+print(credit_card_conf_matrix)
+
+Accuracy <- round(credit_card_conf_matrix$overall['Accuracy'], 2)
+print(Accuracy)
+
+train_pred_prob_cc <- predict(credit_card_full_model, newdata = Train_credit_card, type = "response")
+train_mse_cc <- mean((train_pred_prob_cc - as.numeric(Train_credit_card$prob) - 1)^2)
+print(paste("Train MSE:", round(train_mse_cc, 4)))
+
+# Calculate MSE for the test data
+test_mse_cc <- mean((pred_prob_credit_card - as.numeric(Test_credit_card$prob) - 1)^2)
+print(paste("Test MSE:", round(test_mse_cc, 4)))
+```
+
+**Building the Reduced Model**
+```{r}
+credit_card_reduced_model <- step(credit_card_full_model, direction = "both")
+
+set.seed(097)
+
+credit_card_train_index <- createDataPartition(probAprov$prob, p = .7, list = FALSE, times = 1)
+
+Train_credit_card <- probAprov[credit_card_train_index,]
+Test_credit_card  <- probAprov[-credit_card_train_index,]
+
+Train_credit_card$prob <- as.factor(Train_credit_card$prob)
+Test_credit_card$prob <- as.factor(Test_credit_card$prob)
+
+credit_card_reduced_model <- glm(prob ~ income + education + gender + home, data = Train_credit_card, family = binomial(link="logit"))
+
+summary(credit_card_reduced_model)
+
+pred_prob_credit_card <- predict(credit_card_reduced_model, newdata = Test_credit_card, type = "response")
+pred_class_credit_card <- ifelse(pred_prob_credit_card > 0.5, 1, 0)
+
+pred_class_credit_card <- as.factor(pred_class_credit_card)
+levels(pred_class_credit_card) <- levels(Test_credit_card$prob)
+
+credit_card_conf_matrix <- confusionMatrix(data = pred_class_credit_card, reference = Test_credit_card$prob)
+
+print(credit_card_conf_matrix)
+
+Accuracy <- round(credit_card_conf_matrix$overall['Accuracy'], 2)
+print(Accuracy)
+
+train_pred_prob_cc <- predict(credit_card_reduced_model, newdata = Train_credit_card, type = "response")
+train_mse_cc <- mean((train_pred_prob_cc - as.numeric(Train_credit_card$prob) - 1)^2)
+print(paste("Train MSE:", round(train_mse_cc, 4)))
+
+# Calculate MSE for the test data
+test_mse_cc <- mean((pred_prob_credit_card - as.numeric(Test_credit_card$prob) - 1)^2)
+print(paste("Test MSE:", round(test_mse_cc, 4)))
+```
+
+**Building the Reduced Model with Transformation**
+```{r}
+set.seed(097)
+
+credit_card_train_index <- createDataPartition(probAprov$prob, p = .7, list = FALSE, times = 1)
+
+Train_credit_card <- probAprov[credit_card_train_index,]
+Test_credit_card  <- probAprov[-credit_card_train_index,]
+
+Train_credit_card$prob <- as.factor(Train_credit_card$prob)
+Test_credit_card$prob <- as.factor(Test_credit_card$prob)
+
+credit_card_transformed__model <- glm(prob ~ log_income + education + gender + home, data = Train_credit_card, family = binomial(link="logit"))
+
+summary(credit_card_transformed__model)
+
+pred_prob_credit_card <- predict(credit_card_transformed__model, newdata = Test_credit_card, type = "response")
+pred_class_credit_card <- ifelse(pred_prob_credit_card > 0.5, 1, 0)
+
+pred_class_credit_card <- as.factor(pred_class_credit_card)
+levels(pred_class_credit_card) <- levels(Test_credit_card$prob)
+
+credit_card_conf_matrix <- confusionMatrix(data = pred_class_credit_card, reference = Test_credit_card$prob)
+
+print(credit_card_conf_matrix)
+
+Accuracy <- round(credit_card_conf_matrix$overall['Accuracy'], 2)
+print(Accuracy)
+
+train_pred_prob_cc <- predict(credit_card_transformed__model, newdata = Train_credit_card, type = "response")
+train_mse_cc <- mean((train_pred_prob_cc - as.numeric(Train_credit_card$prob) - 1)^2)
+print(paste("Train MSE:", round(train_mse_cc, 4)))
+
+# Calculate MSE for the test data
+test_mse_cc <- mean((pred_prob_credit_card - as.numeric(Test_credit_card$prob) - 1)^2)
+print(paste("Test MSE:", round(test_mse_cc, 4)))
+```
+
+## Model evaluation and validations
+Once we had created our models, we then had to evaluate each one to see which is the best. We used a variety of metrics to achieve this goal. We used accuracy (~67-69%), sensitivity (~94%), and specificity(~14-15%) often to see how good of a job it was doing at prediction. In addition, we used confusion matrices to see potential faults in the model.
+
+We found through the confusion matrices that our models were not doing a good job of predicting negative outcomes “Not Approved”. The low specificity rate (14% - 15%) confirmed that we were not doing a good job at predicting negative outcomes. It rarely would predict not approved which was a red flag. We could not come to a definitive conclusion on what caused this, but we do hypothesize that it has to do with the dataset potentially being unbalanced.
+
+We did achieve very high results of sensitivity however. Our sensitivity rate was approximately (94%) in all of our models. However, it is difficult to take this figure too seriously because our models had a 91% approval prediction rate, meaning that it would almost always predict approved.
+
+**Visualizing Evaluation Metrics and Confusion Matrix**
+```{r}
+set.seed(097)
+# Extract metrics
+accuracy <- credit_card_conf_matrix$overall['Accuracy']
+# The sensitivity and specificity is mixed up, so we need to adjust it by swapping them
+sensitivity <- credit_card_conf_matrix$byClass['Specificity']
+specificity <- credit_card_conf_matrix$byClass['Sensitivity']
+
+# Create a data frame with the metrics, swapping the sensitivity and specificity values
+metrics_df <- data.frame(
+  Metric = c("Accuracy", "Sensitivity", "Specificity"),
+  Value = c(accuracy, sensitivity, specificity)
+)
+
+# These plots are used in evaluating the model and presenting the information to the class:
+
+# Plot the metrics
+ggplot(metrics_df, aes(x = Metric, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", width = 0.5, color = "black", size = 0.7) +
+  geom_text(aes(label = scales::percent(Value)), vjust = -0.3, size = 5, fontface = "bold") +
+  scale_fill_manual(values = c("Accuracy" = "#31a354", "Sensitivity" = "#74c476", "Specificity" = "#a1d99b")) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+  ggtitle("Model Performance Metrics") +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(face = "bold", size = 20, color = "#238b45", hjust = 0.5),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(face = "bold", size = 14, color = "#238b45"),
+    axis.text.y = element_text(size = 12, color = "#238b45"),
+    legend.position = "none"
+  )
+
+# extracting the confusion matrix only and converting it to a data frame
+conf_matrix <- credit_card_conf_matrix$table
+conf_matrix_df <- as.data.frame(conf_matrix)
+colnames(conf_matrix_df) <- c("Reference", "Prediction", "Freq")
+
+# Customize the heatmap for a green color scheme
+ggplot(conf_matrix_df, aes(x = Prediction, y = Reference, fill = Freq)) +
+  geom_tile(color = "white", size = 0.7) +
+  geom_text(aes(label = Freq), color = "black", size = 6, fontface = "bold") +
+  scale_fill_gradient(low = "#e5f5e0", high = "#31a354") +
+  ggtitle("Confusion Matrix Heatmap") +
+  labs(x = "Prediction", y = "True Result") +
+  theme_minimal(base_size = 16) +
+  theme(
+    plot.title = element_text(face = "bold", size = 20, color = "#238b45", hjust = 0.5),
+    axis.title.x = element_text(face = "bold", size = 16, color = "#238b45"),
+    axis.title.y = element_text(face = "bold", size = 16, color = "#238b45"),
+    axis.text.x = element_text(size = 14, color = "#238b45"),
+    axis.text.y = element_text(size = 14, color = "#238b45"),
+    legend.position = "none"
+  )
+
+```
+
+## Conclusions and Discussion
+Through our analysis we were able to identify the most significant factors to determine which individuals would be approved for a credit card. The two most significant factors were income and whether a person had a house. We were able to identify these factors because in both the full and reduced model the two factors were labeled with three asterisks and their P(>|z|) values were extremely low.
+
+We created two models to predict if someone would be approved for a credit card or not. First model was a full model (linear regression) that used all variables and the second was a reduced model (stepwise regression) with a log transformation on the income variable. We found that the performance of both models was very similar but the reduced stepwise regression model was slightly better. Sensitivity was the same across the board but there was a 1% increase in specificity and a 2% increase in accuracy when running the reduced model.
+
+A future plan for this project would be to improve our model, specifically its accuracy. Although 69% is not too bad we know we could definitely improve on it. Our plan is to add in some important features that are taken into consideration when being approved for a credit card. Banks focus on credit history, credit scores, and debt to income ratios, which are not accounted for in our current dataset. Our current model’s limitation is that it is not generalizable because the data is only coming from one source. Our idea is to combine our current dataset with data from different banks. Banks refer to the same personal information however some banks weigh different factors more than others. Providing our model with a wider range of data would improve upon its accuracy. 
+
+## Author's Contributions
+**Ruby Situ**: Data cleaning/generating and EDA boxplot.
+
+**Shriya Paturu**: Worked on building the model and applying transformations.
+
+**Simon Rodriguez**: Worked on data visualization and model evaluation.
+
+**Andrea Ruan**: Worked on part of the EDA for the dataset and interpreted the results of the models.
+
+**Jia Desai**: Worked on EDA barplots and compiling report Rmd file.
+
+## Data/Code Availability
+We obtained the dataset from kaggle(https://www.kaggle.com/datasets/rikdifos/credit-card-approval-prediction). 
+
